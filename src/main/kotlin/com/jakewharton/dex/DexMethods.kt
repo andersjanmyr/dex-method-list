@@ -1,6 +1,7 @@
 package com.jakewharton.dex
 
 import com.android.dex.Dex
+import com.android.dex.Annotation
 import com.android.dex.DexFormat
 import com.android.dex.MethodId
 import com.android.dx.cf.direct.DirectClassFile
@@ -97,12 +98,67 @@ class DexMethods private constructor() {
     private fun toMethod(dex: Dex, methodId: MethodId): DexMethod {
       val declaringType = humanName(dex.typeNames()[methodId.declaringClassIndex])
       val name = dex.strings()[methodId.nameIndex]
+      System.out.println("classOffset" + dex.classDefs())
+      try {
+        val annotationSetOffset = getAnnotationSetOffset(dex, methodId)
+        if (annotationSetOffset != 0) {
+          val setIn = dex.open(annotationSetOffset) // annotation_set_item
+          var i = 0
+          val size = setIn.readInt()
+          System.out.println("Size: $size")
+          while (i < size) {
+            val annotationOffset = setIn.readInt()
+            val annotationIn = dex.open(annotationOffset) // annotation_item
+            val candidate = annotationIn.readAnnotation()
+            val reader = candidate.reader
+            val fieldCount = reader.readAnnotation()
+            System.out.println("FC: $candidate $fieldCount")
+            val annotationType = reader.getAnnotationType();
+            var j = 0
+            while (j < fieldCount) {
+              val anameIndex = reader.readAnnotationName();
+              val aname = dex.strings()[anameIndex]
+              reader.skipValue()
+              System.out.println("NAME: $annotationType $aname ")
+              j++
+            }
+            i++
+          }
+        }
+      } catch (e: Exception) {
+        e.printStackTrace()
+      }
+
       val methodProtoIds = dex.protoIds()[methodId.protoIndex]
       val parameterTypes = dex.readTypeList(methodProtoIds.parametersOffset).types
           .map { dex.typeNames()[it.toInt()] }
           .map { humanName(it) }
       val returnType = humanName(dex.typeNames()[methodProtoIds.returnTypeIndex])
       return DexMethod(declaringType, name, parameterTypes, returnType)
+    }
+
+    private fun getAnnotationSetOffset(dex: Dex, methodId: MethodId): Int {
+      val directoryOffset = dex.annotationDirectoryOffsetFromClassDefIndex(methodId.declaringClassIndex)
+      if (directoryOffset == 0) {
+        return 0 // nothing on this class has annotations
+      }
+      val directoryIn = dex.open(directoryOffset)
+      val classSetOffset = directoryIn.readInt()
+      val fieldsSize = directoryIn.readInt()
+      val methodsSize = directoryIn.readInt()
+      directoryIn.readInt() // parameters size
+      for (i in 0..fieldsSize - 1) {
+        val candidateFieldIndex = directoryIn.readInt()
+        val annotationSetOffset = directoryIn.readInt()
+      }
+      for (i in 0..methodsSize - 1) {
+        val candidateMethodIndex = directoryIn.readInt()
+        val annotationSetOffset = directoryIn.readInt()
+        if (candidateMethodIndex == methodId.protoIndex) {
+          return annotationSetOffset;
+        }
+      }
+      return 0
     }
 
     private fun humanName(type: String): String {
